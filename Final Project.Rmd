@@ -1,0 +1,189 @@
+---
+title: "518 Final Project"
+author: "Noah Hamilton"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r Install Libraries}
+list.of.packages <- c("glue", "data.table", "dplyr")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+```
+
+```{r Load Libraries}
+library(glue)
+library(data.table)
+library(dplyr)
+```
+
+```{r Load in Happiness Report}
+#Source: https://www.kaggle.com/datasets/ajaypalsinghlo/world-happiness-report-2021
+#load in the data & select only the data we want which is country name, happiness score (ladder score) and regional indicator
+happiness_dt <- fread("./Data/world-happiness-report-2021.csv", select = c("Country name", "Regional indicator", "Ladder score"))
+setnames(happiness_dt, c("Country name", "Ladder score"), c("Country", "Happiness"))
+```
+
+```{r Load in World Data}
+#Source: https://www.kaggle.com/datasets/daniboy370/world-data-by-country-2020?select=Life+expectancy.csv
+
+#All csvs are downloaded in WorldData folder. We will load in the folder filepath here.
+    world_data_directory <- "./Data/WorldData/"
+
+#Run for loop that will read in each file path and concatenate them by country.
+for (file in list.files(world_data_directory)){
+    
+    # Generate the dataframe for each file in the folder
+    new_dt = fread(glue("{world_data_directory}{file}"))
+    #Generate a new column that counts number of instances of ISO-Codes
+    new_dt[, country_counter := 1:.N, by = `ISO-code`]
+    #Filter the data so it removes duplicates and then delete the country_counter column
+    new_dt = new_dt[country_counter == 1][, country_counter := NULL]
+    
+    #creates teh world_dt dataframe   
+    if (!exists("world_dt")) {
+        world_dt = new_dt
+    #merge each new_dt on the world_dt and keep all to ensure there are NA values where they should be.
+    } else {
+        world_dt = merge(world_dt, new_dt, on = "ISO-code", all=T)        
+    }    
+}
+
+#remove these variables as we dont need these
+rm(world_data_directory, file, new_dt)
+```
+
+```{r Health Data Functions, include=F}
+read_data <- function (file_name) {
+    fread(glue("{health_data_directory}{file_name}"))
+}
+
+get_latest_period <- function(dt) {
+    dt[, max_country_period := max(Period), by = Location][Period == max_country_period][, max_country_period := NULL]
+}
+
+concatenate_health_files <- function(file_cat_l, function_l) {
+    for (file_ind in 1:length(file_cat_l)){
+        file_cat = file_cat_l[[file_ind]]
+        file_function = function_l[[file_ind]]
+
+        for (file in 1:length(file_cat)){
+            new_dt = file_function(file_cat[file], names(file_cat[file]))
+            if (!exists("res_dt")) {
+                res_dt = new_dt
+            } else {
+                res_dt = merge(res_dt, new_dt, by = "Location", all=T)
+            }
+        }
+    }
+    #print(nrow(res_dt))
+    return(res_dt)
+}
+
+filter_conv <- function (file_name, var_name) {
+    dt = read_data(file_name)
+    dt = get_latest_period(dt)
+    res = dt[Dim1 == "Both sexes", .(Location, TEMP = as.numeric(gsub("^(.*)\\s.*", "\\1", `First Tooltip`)))]
+    setnames(res, "TEMP", var_name)
+    return(res)
+}
+
+conv <- function (file_name, var_name) {
+    dt = read_data(file_name)
+    dt = get_latest_period(dt)
+    res = dt[, .(Location, TEMP = as.numeric(gsub("^(.*)\\s.*", "\\1", `First Tooltip`)))]
+    setnames(res, "TEMP", var_name)
+    return(res)
+}
+
+sel <- function (file_name, var_name) {
+    dt = read_data(file_name)
+    dt = get_latest_period(dt)
+    res = dt[, .(Location, TEMP = `First Tooltip`)]
+    setnames(res, "TEMP", var_name)
+    return(res)
+}
+```
+
+```{r Health Data File Definitions, include=F}
+health_data_directory <- "./Data/WorldHealth/"
+
+filter_conv_files = c("CCDR3070" = "30-70cancerChdEtc.csv",
+                    "CHILD_MORT" = "under5MortalityRate.csv",
+                    "ALCOHOL_AB" = "alcoholSubstanceAbuse.csv",
+                    "POISON_MORT" = "mortalityRatePoisoning.csv",
+                    "NONCOM_DISEASE" = "30-70cancerChdEtc.csv",
+              "HAND_WASH" = "basicHandWashing.csv")
+                
+conv_files = c("MATERNAL_MORT" = "maternalMortalityRatio.csv", 
+                "TUBERC" = "incedenceOfTuberculosis.csv",
+               "MALARIA" = "incedenceOfMalaria.csv",
+               "REP_AGE_WOMEN" = "reproductiveAgeWomen.csv")
+
+sel_files = c("NTD" = "interventionAgianstNTDs.csv",
+              "ROADTRAFFIC_MORT" = "roadTrafficDeaths.csv",
+              "UNIV_HEALTHCARE" = "uhcCoverage.csv",
+              "MEDICS" = "medicalDoctors.csv",
+              "DRINKING_WATER" = "basicDrinkingWaterServices.csv",
+              "CLEAN_FUEL_TECH" = "cleanFuelAndTech.csv",
+              "DENTISTS" = "Dentists.csv",
+              "PHARM" = "Pharmacists.csv")
+
+
+file_cat_l = list(filter_conv_files, conv_files, sel_files)
+function_l = list(filter_conv, conv, sel)
+```
+
+```{r Load in World Health Data}
+#Source: https://www.kaggle.com/datasets/utkarshxy/who-worldhealth-statistics-2020-complete
+
+# Merge the health data together 
+world_health_dt = concatenate_health_files(file_cat_l, function_l)
+setnames(world_health_dt, "Location", "Country")
+
+#remove these variables as they are not needed
+rm(file_cat_l, function_l, conv_files, filter_conv_files, health_data_directory, sel_files, concatenate_health_files, conv, filter_conv, get_latest_period, read_data, sel)
+```
+
+```{r Fix Country Names, echo=F}
+
+#Happiness Data
+  happiness_dt[Country == 'Taiwan Province of China', Country := "Taiwan"]
+  happiness_dt[Country == 'Hong Kong S.A.R. of China', Country := "Hong Kong"]
+  happiness_dt[Country == 'Congo (Brazzaville)', Country := "Republic of the Congo"]
+  happiness_dt[Country == 'Gambia', Country := "The Gambia"]
+  happiness_dt[Country == 'Palestinian Territories', Country := "Palestine"]
+  happiness_dt[Country == 'Swaziland', Country := "Eswatini"]
+
+#World Health Data
+  world_health_dt[Country == "Czechia", Country := "Czech Republic"]
+  world_health_dt[Country == "Democratic People's Republic of Korea", Country :=   "North Korea"]
+  world_health_dt[Country == "Republic of Korea", Country := "South Korea"]
+  world_health_dt[Country == "Viet Nam", Country := "Vietnam"]
+  world_health_dt[Country == "Côte d’Ivoire", Country := "Ivory Coast"]
+  world_health_dt[Country == "The former Yugoslav Republic of Macedonia",   Country:="North Macedonia"]
+  world_health_dt[Country == "Gambia", Country := "The Gambia"]
+  world_health_dt[Country == "Congo", Country := "Republic of the Congo"]
+
+
+  missing_countries = happiness_dt[!Country %in% world_health_dt$Country, Country]
+
+# Automatic fixes (using a for loop)
+for (missing_country in missing_countries) {
+    world_health_dt[grepl(missing_country, Country), Country := missing_country]    
+}
+
+#merge dataframes together
+data_df = merge(happiness_dt, world_dt, by = "Country") %>% merge(world_health_dt, by = "Country")
+
+# Fix column names so they don't have odd puncuation (e.g. spaces)
+colnames(data_df) <- make.names(colnames(data_df))
+
+#remove these variables as we dont need them anymore and clean our environment before doing analysis
+rm(missing_countries, missing_country)
+```
+
+```{r}
+
+```
+
