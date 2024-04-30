@@ -4,19 +4,48 @@ author: "Noah Hamilton"
 date: "`r Sys.Date()`"
 output: pdf_document
 ---
+# Installing Packages
 
 ```{r Install Libraries}
-list.of.packages <- c("glue", "data.table", "dplyr")
+list.of.packages <- c("glue", "data.table", "dplyr", "sf", "rnaturalearth", "rnaturalearthdata", "showtext", "sysfonts", "strip", "Metrics")
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
 if(length(new.packages)) install.packages(new.packages)
 ```
 
-```{r Load Libraries}
+```{r Load Libraries, message=FALSE}
 library(glue)
 library(data.table)
 library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(scales)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+#library(rgeos)
+library(showtext)
+library(ggsci)
+library(ggtext)
+library(mice)
+library(plotly)
+library(corrplot)
+library(Hmisc)
+library(VIM)
+library(GGally)
+library(car)
+library(kableExtra)
+library(ggtext)
+library("PerformanceAnalytics")
+library(psych)
+library(strip)
+library(ggcorrplot)
+library(ModelMetrics)
+library(Metrics)
+library(knitr)
 ```
 
+# Loading in Data
+## Happiness Data
 ```{r Load in Happiness Report}
 #Source: https://www.kaggle.com/datasets/ajaypalsinghlo/world-happiness-report-2021
 #load in the data & select only the data we want which is country name, happiness score (ladder score) and regional indicator
@@ -24,6 +53,7 @@ happiness_dt <- fread("./Data/world-happiness-report-2021.csv", select = c("Coun
 setnames(happiness_dt, c("Country name", "Ladder score"), c("Country", "Happiness"))
 ```
 
+## World Data
 ```{r Load in World Data}
 #Source: https://www.kaggle.com/datasets/daniboy370/world-data-by-country-2020?select=Life+expectancy.csv
 
@@ -53,6 +83,7 @@ for (file in list.files(world_data_directory)){
 rm(world_data_directory, file, new_dt)
 ```
 
+## Health Data
 ```{r Health Data Functions, include=F}
 read_data <- function (file_name) {
     fread(glue("{health_data_directory}{file_name}"))
@@ -145,6 +176,7 @@ setnames(world_health_dt, "Location", "Country")
 rm(file_cat_l, function_l, conv_files, filter_conv_files, health_data_directory, sel_files, concatenate_health_files, conv, filter_conv, get_latest_period, read_data, sel)
 ```
 
+## Cleaning Data
 ```{r Fix Country Names, echo=F}
 
 #Happiness Data
@@ -174,16 +206,398 @@ for (missing_country in missing_countries) {
 }
 
 #merge dataframes together
-data_df = merge(happiness_dt, world_dt, by = "Country") %>% merge(world_health_dt, by = "Country")
+final_df = merge(happiness_dt, world_dt, by = "Country") %>% merge(world_health_dt, by = "Country")
 
 # Fix column names so they don't have odd puncuation (e.g. spaces)
-colnames(data_df) <- make.names(colnames(data_df))
+colnames(final_df) <- make.names(colnames(final_df))
 
 #remove these variables as we dont need them anymore and clean our environment before doing analysis
 rm(missing_countries, missing_country)
 ```
 
-```{r}
+# Explore Data
+## Missing Data
+### By Country
+```{r Missing Data by Country}
 
+# What country has the most missing data?
+  top_missing_by_country = head(final_df[, .(`Missing values`=sum(sapply(.SD, is.na))), by = Country][order(-`Missing values`)], 20)
+
+# Let's make a plot visualizing the amount of missing values per country
+ggplot(top_missing_by_country, aes(x=reorder(Country, `Missing values`), y = `Missing values`, fill = ifelse(Country== "Palestine", "Prob", "Fine"))) +
+  geom_col() + 
+  coord_flip() +
+  scale_y_continuous(expand = expansion(add = 0.05)) + 
+  scale_fill_manual(values = c("Prob" = "red", "Fine" = "lightgreen"), guide="none") +
+  theme(panel.grid = element_blank(),
+        plot.title = element_blank(),
+            legend.title = element_blank(),
+            axis.title.y = element_blank(), 
+            panel.border = element_blank(),
+            axis.line.x.bottom  = element_line(color = 'gray'),
+            axis.line.y.left  = element_line(color = 'gray'))
+
+
+```
+
+### By Variable
+```{r Missing Data by Data, echo=TRUE, out.width="100%"}
+
+# Input the data, but exclude Palestine (lots of missing)
+final_df = final_df[Country != "Palestine"]
+
+# Determine the rest of the missing data
+missing_by_var = final_df[, sapply(.SD, function(x) sum(is.na(x))/ length(x))]
+missing_by_var_dt = data.table(variable = names(missing_by_var), `Missing %` = missing_by_var)[`Missing %` > 0]
+
+# Plot the missing data
+ggplot(missing_by_var_dt, aes(x=reorder(variable, `Missing %`), y=`Missing %`)) +
+  geom_col(fill= "blue", width=0.75) +
+  coord_flip() + 
+  scale_y_continuous(expand = expansion(add = 0)) + 
+  theme(panel.grid = element_blank(),
+            legend.title = element_blank(),
+            axis.title.y = element_blank(), 
+            panel.border = element_blank(),
+            axis.line.x.bottom  = element_line(color = 'gray'),
+            axis.line.y.left  = element_line(color = 'gray'))
+```
+
+```{r Remove Variables with Lots of Missing Data}
+final_df <- final_df %>%
+  select(-c(HAND_WASH, MALARIA, REP_AGE_WOMEN, CHILD_MORT))
+```
+
+# Visualize Data
+
+```{r world_hap_prep, echo=TRUE, dpi=100}
+
+# Load the countries in the dataset (as fancy polygons)
+world = ne_countries(scale = "medium", returnclass = "sf")
+
+hap_world = merge(world, final_df[, .(`ISO.code`, Happiness)], by.x="adm0_a3", by.y="ISO.code", all.x=T)
+
+final_df[data.table(world[c("continent", "adm0_a3")]), on = c(`ISO.code` = "adm0_a3"), Continent := i.continent]
+final_df[Country == "Maldives", Continent := "Asia"]
+final_df[Country == "Mauritius", Continent := "Africa"]
+final_df[Continent %in% c("Asia", "Oceania"), Continent := "Asia & Oceania"]
+
+```
+
+```{r world_hap_plot, echo=TRUE, out.width="100%"}
+
+# Plot the world's happiness by fancy plotting the happiness amount in color on a world map
+
+# first get the min/max hapiness in order to create a custom gradient of unhappy to happy
+min_hap = min(hap_world$Happiness, na.rm = T)
+max_hap = max(hap_world$Happiness, na.rm = T)
+mid_hap = (min_hap + max_hap)/2
+my_breaks = c(min_hap, mid_hap, max_hap)
+labels = c("Unhappy", "Average", "Happy")
+
+# Use the gradient and happiness scores to grade the countries from happy to not very happy (i.e. mega ggplot)
+ggplot(data = hap_world) + 
+  geom_sf(aes(fill=Happiness)) +
+  scale_fill_gradient2(low="red", mid="white", high="gold", 
+                       midpoint = mid_hap, 
+                       breaks = my_breaks,
+                       labels = labels) +
+  guides(fill = guide_colorbar(title.position = "top",
+                               title.hjust = .5,
+                               ticks.colour = "white",
+                               frame.colour = "black",
+                               barwidth = unit(20, "lines"),
+                               barheight = unit(.5, "lines"))) +
+  labs(title = 'World happiness index 2021') +
+  theme(plot.title = element_markdown(hjust= 0.5),
+        panel.grid = element_blank(),
+        legend.title = element_text(colour = "white"),
+        legend.box.margin = margin(-10,0,0,0),
+        legend.margin = margin(-10,0,0,0),
+        #plot.title = element_text(colour = "white"),
+        legend.position = "bottom")
+  
+```
+
+We can see that on average North America, Europe and Australia appear to be the happiest. But in order to compare across Continents we need a better chart. Luckily, I got you covered:
+
+```{r cont_hap_plot, echo=TRUE, out.width="100%"}
+# What follows is, in my opinion, an overly unecessarily complicated plot (imo, a ploty interactive would have been better than arrows)
+final_df[, Continent := fct_reorder(Continent, Happiness)]
+
+cont_dt = final_df[, c("Country", "Continent", "Happiness")]
+#cont_dt = as.data.table(cont_dt)[, geometry := NULL][!is.na(Happiness)]
+
+cont_dt[, region_hap := mean(Happiness), by = Continent]
+
+dystopia_score = 2.43
+
+world_hap_avg = cont_dt[, mean(Happiness)]
+
+set.seed(1)
+hap = ggplot(cont_dt, aes(x = Continent, y = Happiness, color = Continent)) +
+      geom_jitter(size = 2, alpha = 0.45, width = 0.2) +
+      stat_summary(fun = mean, geom = "point", size = 5) +
+      geom_hline(aes(yintercept = world_hap_avg), color = "gray70", size = 0.6) +
+      geom_segment(
+        aes(x = Continent, xend = Continent,
+            y = world_hap_avg, yend = region_hap),
+        size = 0.8
+      ) +
+      coord_flip() +
+      scale_y_continuous(limits = c(dystopia_score, 8), expand = c(0.005, 0.005)) +
+        scale_color_uchicago() +
+        labs(x = NULL, y = "Happiness index") +
+        theme(
+          legend.position = "none",
+          #axis.title = element_text(size = 18),
+          #axis.text = element_text(family = "Roboto Mono"), #size = 16),
+          panel.grid = element_blank()
+        )
+ 
+# hap_text = hap +
+#   annotate(
+#     "text", x = 4.3, y = 4.8,  size = 6, color = "gray20", lineheight = .6,
+#     label = glue::glue("Worldwide\n average:{round(world_hap_avg, 1)}")) +
+#   annotate(
+#     "text", x = 3, y = 7.5,  size = 5, color = "gray20", lineheight = .5,
+#     label = "Continental\n average") +
+#   annotate(
+#     "text", x = 4.4, y = 3.1,  size = 5, color = "gray20", lineheight = .9,
+#     label = "Haiti") +
+#   annotate(
+#     "text", x = 2.6, y = 3,  size = 5, color = "gray20", lineheight = .9,
+#     label = "Afghanistan")
+#   
+# arrows <-
+#   tibble(
+#     x1 = c(4, 3, 3, 4.4, 2.5),
+#     x2 = c(3.5, 3.8, 3, 3.9, 2),
+#     y1 = c(4.8, 7, 7, 3.3, 3),
+#     y2 = c(world_hap_avg, 6.2, 6, 3.6, 2.6)
+#   )
+# 
+# hap_text +
+#   geom_curve(
+#     data = arrows, aes(x = x1, y = y1, xend = x2, yend = y2),
+#     arrow = arrow(length = unit(0.07, "inch")), size = 1,
+#     color = "gray20", curvature = -0.3
+#   ) 
+```
+
+# Exploratory Data Analysis
+
+```{r Assess Variable Normality}
+      # SELECT COLUMNS TO EXCLUDE FROM THE QQPLOTS BELOW  
+        exclude_cols <- c("ISO.code","Country", "Continent", "Regional.indicator")
+      # Specify the dataset you want to generate QQ-Plots for
+        df <- as.data.frame(final_df)
+    
+      # Now we can run this for loop that will loop through the columns in our dataset and plot for us QQ-Plots (remember to specify which columns you need to exclude as this won't work for non-numeric columns) 
+par(mfrow= c(4,6))        
+      for (col in colnames(df)) {
+      if (col %in% exclude_cols) {
+        next
+      }
+      qqPlot(df[,col],
+             ylab= col,
+             xlab = "norm quantiles",
+             main = paste("QQ Plot of", col))
+      }
+
+# Set the width and height of the plotting device
+options(repr.plot.width = 20, repr.plot.height = 10)  # Adjust width and height as needed
+dev.off
+# Your plotting code here
+par(mfrow = c(4, 6))        
+for (col in colnames(df)) {
+  if (col %in% exclude_cols) {
+    next
+  }
+  qqPlot(df[, col],
+         ylab = col,
+         xlab = "norm quantiles")
+}
+```
+```{r}
+# Open a PDF device
+pdf("/Users/ntham/Library/CloudStorage/OneDrive-Personal/School/Senior/Spring/Statistics in Biomedical Informatics (B518)/Project/B518_Final_Project/plots.pdf", width = 25, height = 15)  # Adjust width and height as needed
+
+# Set up the plotting layout
+par(mfrow = c(4, 6))    
+
+# Adjust margins to reduce white space
+par(mar = c(2, 2, 2, 2))  # Adjust outer margins
+par(mai = c(0.4, 0.4, 0.2, 0.5))  # Adjust inner margins
+
+# Loop through each column in df
+for (col in colnames(df)) {
+  if (col %in% exclude_cols) {
+    next
+  }
+  
+  # Create QQ plot for the current column
+  qqPlot(df[, col],
+         ylab = col)
+}
+
+# Close the PDF device
+dev.off()
+```
+
+```{r}
+# Open a PDF device
+pdf("/Users/ntham/Library/CloudStorage/OneDrive-Personal/School/Senior/Spring/Statistics in Biomedical Informatics (B518)/Project/B518_Final_Project/plots.pdf", width = 25, height = 15)  # Adjust width and height as needed
+
+# Set up the plotting layout
+par(mfrow = c(4, 6))    
+
+# Loop through each column in df
+for (i in 1:length(colnames(df))) {
+  col <- colnames(df)[i]
+  if (col %in% exclude_cols) {
+    next
+  }
+  
+  # Create QQ plot for the current column
+  qq <- qqPlot(df[, col], 
+               ylab = col)  # Create QQ plot without displaying it
+  
+  # Plot the QQ plot
+  #plot(qq)
+}
+
+# Close the PDF device
+dev.off()
+
+```
+
+
+##Full Dataset
+```{r}
+#Compute p-values and significance levels
+correlation_test <- corr.test(final_df[, -c("ISO.code","Country", "Continent", "Regional.indicator")], method = "spearman", adjust = "none")
+correlations <- cor(final_df[, -c("ISO.code","Country", "Continent", "Regional.indicator")], use = "complete.obs")
+
+# Set correlation threshold
+corr_threshold <- 0.6
+
+# Filter correlation matrix to include only correlations with absolute value greater than corr_threshold
+correlations_filtered <- correlations
+correlations_filtered[abs(correlations) <= corr_threshold] <- 0
+
+# Create a correlation plot with filtered correlations
+corrplot(correlations_filtered,
+         method = "color",
+         type = "lower",
+         tl.cex = 0.75,
+         tl.srt = 0.01,
+         p.mat = correlation_test$p,
+         sig.level = 0.05, # Significance level set to 0.05
+         insig = "blank"  # Non-significant correlations will appear blank
+)
+```
+
+## Correlation Coefficients
+```{r Review of Correlations -- Visually and statistically, echo=TRUE, warning=FALSE, dpi=100, out.width="100%"}
+filtered_dt <- final_df[, -c("Regional.indicator", "Population.growth", "Sex.ratio", "Suicide.rate", "ALCOHOL_AB", "TUBERC", "NTD", "DENTISTS", "PHARM")]
+
+# Generate a Correlation Matrix in addition to histograms and star symbols that represent p-value significance
+  library("PerformanceAnalytics")
+  chart.Correlation(filtered_dt[, -c("ISO.code","Country", "Continent")], histogram=TRUE, pch=19, method = c("spearman"))
+```
+
+## Filtered Dataset
+```{r}
+#Compute p-values and significance levels
+correlation_test <- corr.test(filtered_dt[, -c("ISO.code","Country", "Continent")], method = "spearman", adjust = "none")
+correlations <- cor(filtered_dt[, -c("ISO.code","Country", "Continent")], use = "complete.obs")
+
+# Set correlation threshold
+corr_threshold <- 0.6
+
+# Filter correlation matrix to include only correlations with absolute value greater than corr_threshold
+correlations_filtered <- correlations
+correlations_filtered[abs(correlations) <= corr_threshold] <- 0
+
+# Create a correlation plot with filtered correlations
+corrplot(correlations_filtered,
+         method = "color",
+         type = "lower",
+         tl.cex = 0.75,
+         tl.srt = 0.01,
+         p.mat = correlation_test$p,
+         sig.level = 0.05, # Significance level set to 0.05
+         insig = "blank"  # Non-significant correlations will appear blank
+)
+```
+
+## Impute Data
+```{r}
+# Perform multiple imputation
+imp <- mice(filtered_dt[, -c("Country", "ISO.code", "Continent")], 
+            printFlag = FALSE, 
+            method = "cart", 
+            m = 1, 
+            seed = 1)
+final_df_imp <- complete(imp, action = "long", include = FALSE)
+final_df_imp <- final_df_imp %>%
+  select(-c(.imp, .id))
+
+final_df_imp <- cbind(filtered_dt[,c("Country", "ISO.code", "Continent")], final_df_imp)
+
+#write.csv(final_df_imp, "/Users/ntham/Library/CloudStorage/OneDrive-Personal/School/Senior/Spring/Visualizing Information (N328)/Final Project/data/world_data.csv")
+```
+
+## Data Summary
+```{r Data Summary}
+# install.packages("summarytools")
+# library(summarytools)
+
+summarydata <- summarytools::descr(final_df_imp)
+colnames(summarydata) <- c("CCDR3070", "Clean Fuel", "Drinking Water", "Fertility", "GDP", "Happiness", "Life Exp", "Maternal Mort", "Meat Consump.", "Median Age", "Doctors", "Noncom. Disease", "Poison Mort", "Roadtraffic Mort.", "Univ. Healthcare", "Urbanization")
+kable(as.data.frame(summarydata), digits = 2, align = "c")
+```
+
+## Stepwise Variable Elimination using LM
+```{r Compute Linear Model, echo=TRUE, warning=FALSE, dpi=100, out.width="100%"}
+
+linearmodel = lm(Happiness ~ Fertility + GDP.per.capita + Life.expectancy + Meat.consumption + Median.age + Urbanization.rate + CCDR3070 + POISON_MORT + NONCOM_DISEASE + MATERNAL_MORT + ROADTRAFFIC_MORT + UNIV_HEALTHCARE + MEDICS + DRINKING_WATER + CLEAN_FUEL_TECH, data = final_df_imp) #Create the linear regression
+summary(linearmodel)
+```
+
+```{r}
+linearmodel = lm(Happiness ~ Meat.consumption + CCDR3070  + ROADTRAFFIC_MORT + DRINKING_WATER , data = final_df_imp)
+
+summary(linearmodel) #Review the results
+```
+
+# Final Multiple Linear Regression
+```{r}
+linearmodel = lm(Happiness ~ Meat.consumption + CCDR3070   + DRINKING_WATER , data = final_df_imp)
+
+summary(linearmodel) #Review the results
+```
+
+# Model Diagnostics
+```{r Assess Linear Model Residuals, echo=TRUE, warning=FALSE, dpi=100, out.width="100%"}
+
+# Finally let's plot the residuals of our model and some additional model diagnostics
+
+# Run these two lines of code together to get a nicely stacked 2x2 plot
+par(mfrow=c(1,2))
+plot(linearmodel, which=1:2)
+plot(linearmodel, which=2)
+```
+## 3.5 Linear Model Error Assessment
+
+```{r Assess Linear Model, echo=TRUE, message=FALSE, warning=FALSE, dpi=100, out.width="100%"}
+
+predicted<-linearmodel$fitted.values # Extract model predictions 
+
+ModelHappinessMAE <- mae(final_df_imp$Happiness, predicted)
+  print(paste("MAE", ModelHappinessMAE))
+ModelHappinessRMSE <- rmse(final_df_imp$Happiness, predicted)
+  print(paste("RMSE", ModelHappinessRMSE))
 ```
 
