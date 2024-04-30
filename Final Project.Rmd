@@ -473,49 +473,15 @@ dev.off()
 ```
 
 
-##Full Dataset
-```{r}
-#Compute p-values and significance levels
-correlation_test <- corr.test(final_df[, -c("ISO.code","Country", "Continent", "Regional.indicator")], method = "spearman", adjust = "none")
-correlations <- cor(final_df[, -c("ISO.code","Country", "Continent", "Regional.indicator")], use = "complete.obs")
-
-# Set correlation threshold
-corr_threshold <- 0.6
-
-# Filter correlation matrix to include only correlations with absolute value greater than corr_threshold
-correlations_filtered <- correlations
-correlations_filtered[abs(correlations) <= corr_threshold] <- 0
-
-# Create a correlation plot with filtered correlations
-corrplot(correlations_filtered,
-         method = "color",
-         type = "lower",
-         tl.cex = 0.75,
-         tl.srt = 0.01,
-         p.mat = correlation_test$p,
-         sig.level = 0.05, # Significance level set to 0.05
-         insig = "blank"  # Non-significant correlations will appear blank
-)
-```
-
-## Correlation Coefficients
-```{r Review of Correlations -- Visually and statistically, echo=TRUE, warning=FALSE, dpi=100, out.width="100%"}
-filtered_dt <- final_df[, -c("Regional.indicator", "Population.growth", "Sex.ratio", "Suicide.rate", "ALCOHOL_AB", "TUBERC", "NTD", "DENTISTS", "PHARM")]
-
-# Generate a Correlation Matrix in addition to histograms and star symbols that represent p-value significance
-  library("PerformanceAnalytics")
-  chart.Correlation(filtered_dt[, -c("ISO.code","Country", "Continent")], histogram=T, pch=19, method = c("spearman"))
-```
-
 ```{r}
 # Specify the variables you want to plot against "Happiness"
 variables <- c("CCDR3070", "CLEAN_FUEL_TECH", "DRINKING_WATER", "Fertility", "GDP.per.capita", "Life.expectancy", "MATERNAL_MORT", "Meat.consumption", "Median.age", "MEDICS", "NONCOM_DISEASE", "POISON_MORT", "ROADTRAFFIC_MORT", "UNIV_HEALTHCARE", "Urbanization.rate")
 
 # Open a PDF device
-pdf("/Users/ntham/Library/CloudStorage/OneDrive-Personal/School/Senior/Spring/Statistics in Biomedical Informatics (B518)/Project/B518_Final_Project/plots2.pdf", width = 25, height = 15)  # Adjust width and height as needed
+pdf("/Users/ntham/Library/CloudStorage/OneDrive-Personal/School/Senior/Spring/Statistics in Biomedical Informatics (B518)/Project/plots2.pdf", width = 18, height = 20)  # Adjust width and height as needed
 
 # Loop through each variable and generate scatter plots
-par(mfrow = c(4, 4))  # Adjust the layout as needed
+par(mfrow = c(5, 3))  # Adjust the layout as needed
 for (variable in variables) {
   plot(final_df$Happiness, final_df[[variable]], 
        xlab = "Happiness", ylab = variable,
@@ -528,18 +494,6 @@ for (variable in variables) {
 }
 
 dev.off()
-```
-
-```{r}
-# Load the PerformanceAnalytics library
-library(PerformanceAnalytics)
-
-# Subset the data to remove unwanted columns
-filtered_dt <- final_df[, -c("Regional.indicator", "Population.growth", "Sex.ratio", "Suicide.rate", "ALCOHOL_AB", "TUBERC", "NTD", "DENTISTS", "PHARM")]
-
-# Generate scatter plots
-chart.Correlation(filtered_dt[, -c("ISO.code","Country", "Continent")], plotMethod = "scatter")
-
 ```
 
 
